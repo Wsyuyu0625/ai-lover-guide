@@ -1,0 +1,267 @@
+// ============================================================
+// 大富翁 · UI part 2 / 2
+// 拼装：cat monopoly.ui.js.part1 monopoly.ui.js.part2 > monopoly.ui.js
+// ============================================================
+var BODY_JS = [
+'<div id="app">',
+'  <div id="bar">',
+'    <div class="who" id="whoA"><span class="pname a" id="nmA">宝宝</span><span id="mA">1500</span></div>',
+'    <div class="who" id="whoB"><span class="pname b" id="nmB">玉衡</span><span id="mB">1500</span></div>',
+'  </div>',
+'  <div id="grid"></div>',
+'  <div id="log"></div>',
+'  <div id="talk"></div>',
+'  <div id="inrow"><input id="said" type="text" placeholder="跟玉衡说句话，回车发送"><button id="btnReload">↻</button><button id="btnSay">发</button></div>',
+'  <div id="btns">',
+'    <button id="btnRoll" class="primary">掷骰子</button>',
+'    <button id="btnBuy">买下</button>',
+'    <button id="btnSkip">不买</button>',
+'    <button id="btnAsk" class="warn">叫玉衡</button>',
+'  </div>',
+'</div>'
+].join("\n");
+
+var PAGE_JS = [
+'(function () {',
+'  var PLACES = ' + PLACES_JS + ';',
+'  var state = null, cells = [], busy = false, lastSeq = -1;',
+'  function rc(i) {',
+'    if (i <= 4) return [1, i + 1];',
+'    if (i <= 7) return [i - 3, 5];',
+'    if (i <= 12) return [5, 13 - i];',
+'    return [17 - i, 1];',
+'  }',
+'  function dg(m) { try { if (window.MonoHost && window.MonoHost.diag) window.MonoHost.diag(String(m)); } catch (e) {} }',
+'  function host(name, args) {',
+'    var H = window.MonoHost;',
+'    if (!H || typeof H[name] !== "function") { dg("no bridge " + name); return null; }',
+'    try { return H[name](args); } catch (e) { dg("call " + name + " fail " + e); return null; }',
+'  }',
+'  function parse(res) { if (res === null || res === undefined || res === "") return null; if (typeof res === "object") return res; try { return JSON.parse(res); } catch (e) { return null; } }',
+'  function buildGrid() {',
+'    var g = document.getElementById("grid");',
+'    for (var i = 0; i < 16; i++) {',
+'      var d = document.createElement("div"); d.className = "cell";',
+'      var p = rc(i); d.style.gridRow = p[0]; d.style.gridColumn = p[1];',
+'      d.innerHTML = \'<div class="nm"></div><div class="pr"></div><div class="tokens"></div>\';',
+'      g.appendChild(d); cells.push(d);',
+'    }',
+'    var c = document.createElement("div"); c.id = "center";',
+'    c.innerHTML = \'<div id="dice">-</div><div id="hint">等开盘</div>\';',
+'    g.appendChild(c);',
+'  }',
+'  function render() {',
+'    if (!state) return;',
+'    var st = state, nm = st.names || { a: "宝宝", b: "玉衡" };',
+'    document.getElementById("nmA").textContent = nm.a; document.getElementById("nmB").textContent = nm.b;',
+'    document.getElementById("mA").textContent = st.money.a; document.getElementById("mB").textContent = st.money.b;',
+'    document.getElementById("whoA").className = "who" + (st.turn === "a" && !st.done ? " act" : "");',
+'    document.getElementById("whoB").className = "who" + (st.turn === "b" && !st.done ? " act" : "");',
+'    for (var i = 0; i < 16; i++) {',
+'      var pl = PLACES[i], d = cells[i], extra = "";',
+'      if (pl.type === "chance") extra += " chance";',
+'      if (pl.type === "fine") extra += " fine";',
+'      if (pl.type === "start") extra += " start";',
+'      if (pl.type === "rest") extra += " rest";',
+'      var oc = st.owner ? st.owner[String(i)] : null;',
+'      if (pl.type === "land" && !oc) extra += (pl.price >= 700 ? " lv4" : pl.price >= 500 ? " lv3" : pl.price >= 350 ? " lv2" : " lv1");',
+'      d.className = "cell" + extra;',
+'      if (oc === "a") d.className += " ownA";',
+'      if (oc === "b") d.className += " ownB";',
+'      if (st.pos.a === i) d.className += " hereA";',
+'      if (st.pos.b === i) d.className += " hereB";',
+'      var pr = "";',
+'      if (pl.type === "land") pr = oc ? (oc === "a" ? (nm.a + "的地") : (nm.b + "的地")) : String(pl.price);',
+'      else if (pl.type === "fine") pr = "-" + pl.amount;',
+'      d.children[0].textContent = pl.name; d.children[1].textContent = pr;',
+'      var tk = "";',
+'      if (st.pos.a === i) tk += \'<span class="tk a"></span>\';',
+'      if (st.pos.b === i) tk += \'<span class="tk b"></span>\';',
+'      d.children[2].innerHTML = tk;',
+'    }',
+'    var hint = "轮到 " + (st.turn === "a" ? nm.a : nm.b) + " 掷骰子";',
+'    if (st.pending && st.pending.type === "buy") hint = "「" + PLACES[st.pending.idx].name + "」" + PLACES[st.pending.idx].price + " 块，买不买？";',
+'    if (st.done) hint = "本局结束：" + (st.winner === "a" ? nm.a : nm.b) + " 赢";',
+'    document.getElementById("hint").textContent = hint;',
+'    document.getElementById("dice").textContent = st.lastRoll ? st.lastRoll : "-";',
+'    var lg = document.getElementById("log"); lg.innerHTML = "";',
+'    (st.log || []).slice(-12).forEach(function (s) { var e = document.createElement("div"); e.textContent = s; lg.appendChild(e); });',
+'    lg.scrollTop = lg.scrollHeight;',
+'    var tl = document.getElementById("talk");',
+'    if (tl) {',
+'      tl.innerHTML = "";',
+'      (st.chat || []).slice(-10).forEach(function (m) {',
+'        var row = document.createElement("div");',
+'        row.className = "m " + (m.who === "a" ? "a" : "b");',
+'        var b = document.createElement("i");',
+'        b.textContent = (m.who === "a" ? "我：" : "玉衡：") + m.text;',
+'        row.appendChild(b); tl.appendChild(row);',
+'      });',
+'      tl.scrollTop = tl.scrollHeight;',
+'    }',
+'    document.getElementById("btnRoll").disabled = !(st.turn === "a" && !st.done && !st.pending);',
+'    document.getElementById("btnBuy").disabled = !(st.pending && st.pending.who === "a" && !st.done);',
+'    document.getElementById("btnSkip").disabled = !(st.pending && st.pending.who === "a" && !st.done);',
+'    document.getElementById("btnAsk").disabled = !(st.turn === "b" && !st.done);',
+'  }',
+'  function apply(json) {',
+'    var st = parse(json); if (!st) return;',
+'    if (typeof st === "string") { try { st = JSON.parse(st); } catch (e) { return; } }',
+'    if (st.seq === lastSeq) return;',
+'    lastSeq = st.seq; state = st; render();',
+'  }',
+'  function refresh(cb) { var j = host("load", null); lastSeq = -1; apply(j); if (cb) cb(); }',
+'  function action(name, arg) {',
+'    if (busy) return;',
+'    busy = true; dg("action " + name);',
+'    try { dg("done " + name + " -> " + host(name, arg)); } catch (e) { dg("act fail " + e); }',
+'    busy = false; refresh();',
+'  }',
+'  function sayIt() {',
+'    dg("sayIt enter");',
+'    if (window.__sending) { dg("sayIt skipped busy"); return; }',
+'    window.__sending = true; setTimeout(function () { window.__sending = false; }, 900);',
+'    var el = document.getElementById("said"); if (!el) return;',
+'    var t = (el.value || "").trim(); if (!t) return;',
+'    try { el.blur(); } catch (e0) {}',
+'    try { el.value = ""; el.setAttribute("value", ""); } catch (e6) {}',
+'    setTimeout(function () { try { el.value = ""; el.setAttribute("value", ""); } catch (e9) {} }, 80);',
+'    if (state) { state.chat = state.chat || []; state.chat.push({ who: "a", text: t, ts: Date.now() }); render(); }',
+'    try { dg("say -> " + host("say", t)); } catch (e) { dg("say fail " + e); }',
+'    refresh();',
+'  }',
+'  function doRoll() {',
+'    if (busy) return;',
+'    busy = true; dg("roll anim");',
+'    var el = document.getElementById("dice"), n = 0;',
+'    var timer = setInterval(function () {',
+'      n++;',
+'      if (el) { el.textContent = String(1 + Math.floor(Math.random() * 6)); el.classList.add("spin"); }',
+'      setTimeout(function () { if (el) el.classList.remove("spin"); }, 60);',
+'      if (n >= 14) {',
+'        clearInterval(timer);',
+'        try { dg("roll -> " + host("roll", "a")); } catch (e) { dg("roll fail " + e); }',
+'        busy = false; refresh();',
+'      }',
+'    }, 70);',
+'  }',
+'  function boot() {',
+'    buildGrid();',
+'    try { document.getElementById("btnRoll").addEventListener("click", doRoll); } catch (e7) { dg("bind roll " + e7); }',
+'    try { document.getElementById("btnBuy").addEventListener("click", function () { action("buy", null); }); } catch (e8) { dg("bind buy " + e8); }',
+'    try { document.getElementById("btnSkip").addEventListener("click", function () { action("skip", null); }); } catch (e9b) { dg("bind skip " + e9b); }',
+'    try { document.getElementById("btnAsk").addEventListener("click", function () { action("ask", null); }); } catch (e10) { dg("bind ask " + e10); }',
+'    try { document.getElementById("btnReload").addEventListener("click", function () { lastSeq = -1; refresh(); dg("manual reload"); }); } catch (e5) { dg("bind reload " + e5); }',
+'    try { document.getElementById("btnSay").addEventListener("click", sayIt); } catch (e1) { dg("bind btnSay " + e1); }',
+'    try { document.getElementById("btnSay").addEventListener("touchend", function (ev) { try { ev.preventDefault(); } catch (e2) {} sayIt(); }); } catch (e3) { dg("bind btnSay touch " + e3); }',
+'    try { document.getElementById("said").addEventListener("keydown", function (e) { if (e.key === "Enter" || e.keyCode === 13) { e.preventDefault(); sayIt(); } }); } catch (e4) { dg("bind said " + e4); }',
+'    dg("boot");',
+'    refresh(function () { dg("first load ok"); });',
+'    setInterval(function () { if (!busy) { try { apply(host("load", null)); } catch (e) {} } }, 2000);',
+'  }',
+'  if (document.readyState === "complete" || document.readyState === "interactive") setTimeout(boot, 30);',
+'  else window.addEventListener("DOMContentLoaded", boot);',
+'})();'
+].join("\n");
+
+function buildHtml() {
+    return '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="utf-8">\n'
+        + '<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">\n'
+        + '<style>\n' + CSS_JS + '\n</style>\n</head>\n<body>\n' + BODY_JS + '\n'
+        + '<scr' + 'ipt>\n' + PAGE_JS + '\n</scr' + 'ipt>\n</body>\n</html>';
+}
+
+function Screen(ctx) {
+    var controller = ctx.createWebViewController("monopoly_view");
+    function _unw(v) { if (Array.isArray(v) && v.length >= 1) return v[0]; return v; }
+    function _cb(cb, obj) { if (typeof cb === "function") { try { cb(JSON.stringify(obj)); } catch (e) {} } }
+
+    controller.addJavascriptInterface("MonoHost", {
+        diag: async function (msg) {
+            msg = _unw(msg);
+            try {
+                var line = "[" + new Date().toISOString() + "] " + msg + "\n";
+                var old = await readText(DIAG_PATH);
+                var lines = (old + line).split("\n");
+                if (lines.length > 240) lines = lines.slice(-240);
+                await writeText(DIAG_PATH, lines.join("\n"));
+            } catch (e) {}
+            return "ok";
+        },
+        load: async function (arg, cb) {
+            var st = await loadState();
+            if (!st) { st = CORE.newState({ nameA: "宝宝", nameB: "玉衡" }); await saveState(st); }
+            _cb(cb, st);
+            return JSON.stringify(st);
+        },
+        roll: async function (arg, cb) {
+            var who = _unw(arg) || "a";
+            var st = await loadState();
+            if (!st) { _cb(cb, { ok: false }); return "no-game"; }
+            if (st.done || st.turn !== who || st.pending) { _cb(cb, { ok: false }); return "not-yours"; }
+            var r = CORE.rollDie();
+            CORE.settle(st, who, r);
+            if (!st.pending) CORE.endTurn(st);
+            await saveState(st);
+            _cb(cb, { ok: true, roll: r });
+            return "ok";
+        },
+        buy: async function (arg, cb) {
+            var st = await loadState();
+            if (!st || !st.pending) { _cb(cb, { ok: false }); return "no-pending"; }
+            CORE.buyLand(st, st.pending.who, st.pending.idx);
+            if (!st.pending) CORE.endTurn(st);
+            await saveState(st);
+            _cb(cb, { ok: true });
+            return "ok";
+        },
+        skip: async function (arg, cb) {
+            var st = await loadState();
+            if (!st || !st.pending) { _cb(cb, { ok: false }); return "no-pending"; }
+            CORE.skipBuy(st, st.pending.who);
+            CORE.endTurn(st);
+            await saveState(st);
+            _cb(cb, { ok: true });
+            return "ok";
+        },
+        ask: async function (arg, cb) {
+            var st = await loadState();
+            if (!st || st.done || st.turn !== "b") { _cb(cb, { ok: false }); return "no"; }
+            await writeText(ASK_PATH, JSON.stringify({ at: Date.now(), note: "递盘，等玉衡掷骰子", state: st }, null, 2));
+            try { if (Tools && Tools.Chat && Tools.Chat.sendMessage) Tools.Chat.sendMessage("（大富翁：盘子递过来了，我读一下 board.json。）"); } catch (e) {}
+            _cb(cb, { ok: true });
+            return "ok";
+        },
+        say: async function (text, cb) {
+            text = _unw(text) || "";
+            var st = await loadState();
+            if (!st) { _cb(cb, { ok: false }); return "no-game"; }
+            if (!st.chat) st.chat = [];
+            st.chat.push({ who: "a", text: String(text), ts: Date.now() });
+            if (st.chat.length > 40) st.chat = st.chat.slice(-40);
+            st.seq = (st.seq || 0) + 1;
+            await saveState(st);
+            try { if (Tools && Tools.Chat && Tools.Chat.sendMessage) Tools.Chat.sendMessage("（大富翁棋盘上她说：" + text + "）"); } catch (e) {}
+            _cb(cb, { ok: true });
+            return "ok";
+        },
+        reset: async function (arg, cb) {
+            var st = CORE.newState({ nameA: "宝宝", nameB: "玉衡" });
+            await saveState(st);
+            _cb(cb, { ok: true });
+            return "ok";
+        }
+    });
+
+    return ctx.UI.WebView({
+        html: buildHtml(),
+        baseUrl: "about:blank",
+        javaScriptEnabled: true,
+        domStorageEnabled: true,
+        controller: controller
+    });
+}
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = Screen;
+exports.Screen = Screen;

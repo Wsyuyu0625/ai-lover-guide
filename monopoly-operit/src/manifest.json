@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.yuheng.monopoly",
+  "version": "0.1.0",
+  "author": ["yuheng"],
+  "main": "main.js",
+  "name": "monopoly",
+  "display_name": { "zh": "大富翁", "en": "Monopoly" },
+  "description": {
+    "zh": "可以在侧边栏打开的大富翁棋盘（16 格一圈）。玩家在棋盘上掷骰、买地、收租；轮到对方时点「叫玉衡」，对话里的 AI 读 board.json、自己掷骰并写回同一份棋谱。棋盘每 2 秒自动同步一次，所以 AI 走完你这边能直接看见。",
+    "en": "A Monopoly board that opens from the sidebar."
+  },
+  "category": "COMPANION",
+  "subpackages": [
+    {
+      "id": "monopoly_tools",
+      "entry": "packages/monopoly_tools.js",
+      "enabled_by_default": true,
+      "display_name": { "zh": "大富翁工具", "en": "Monopoly Tools" },
+      "description": { "zh": "读盘、代 AI 掷骰走子、买地放弃、开新局。", "en": "Read the board, roll for the AI, buy or skip, start a new game." }
+    }
+  ]
+}
